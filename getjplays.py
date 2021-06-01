@@ -12,6 +12,7 @@ import time
 import subprocess
 from pushover import init, Client
 import sys
+import boto3
 
 def unescape(s):
     s = s.replace("&lt;", "<")
@@ -20,28 +21,37 @@ def unescape(s):
     s = s.replace("&amp;", "&")
     return s
 
+
+# pull RDS details from SSM parameter store
+ssm = boto3.client('ssm')
+rdsHost = ssm.get_parameter(Name='/jtweets/rds-instance-host', WithDecryption=False).get("Parameter").get("Value")
+rdsInstance = ssm.get_parameter(Name='/jtweets/rds-instance-name', WithDecryption=False).get("Parameter").get("Value")
+rdsUsername = ssm.get_parameter(Name='/jtweets/rds-instance-user', WithDecryption=False).get("Parameter").get("Value")
+rdsPassword = ssm.get_parameter(Name='/jtweets/rds-instance-pass', WithDecryption=True).get("Parameter").get("Value")
+consumer_key = ssm.get_parameter(Name='/jtweets/tweepy/consumer_key', WithDecryption=True).get("Parameter").get("Value")
+consumer_secret = ssm.get_parameter(Name='/jtweets/tweepy/consumer_secret', WithDecryption=True).get("Parameter").get("Value")
+access_token = ssm.get_parameter(Name='/jtweets/tweepy/access_token', WithDecryption=True).get("Parameter").get("Value")
+access_token_secret = ssm.get_parameter(Name='/jtweets/tweepy/access_token_secret', WithDecryption=True).get("Parameter").get("Value")
+pushover_api_key = ssm.get_parameter(Name='/jtweets/pushover/api_key', WithDecryption=True).get("Parameter").get("Value")
+pushover_app_id = ssm.get_parameter(Name='/jtweets/pushover/app_id', WithDecryption=False).get("Parameter").get("Value")
+
 # set up return JSON
 outJSON = { "artist": "", "song": "", "error": 0, "errorMessage": "", "tweetText": "" }
 
 brisbaneTimezone = timezone('Australia/Brisbane')
 dateFormat = '%Y-%m-%d %H:%M'
 
-# credentials
-consumer_key="fr0pHhPsbhDF6L2ooFeHTf9Tk"
-consumer_secret="oP3PX9GpaBegzCKoE2zPoDI56R75kLDdV2jr3424DAFdpNbj6G"
-access_token="756415056-0TRTrK0GviMzWh4oNcKJQ6jn9pkvBEXsf0oDZcRi"
-access_token_secret="o99gHS8q3r4OYcT5Eultdy3aCOSdXLEbO0ut5LqP3QmdB"
-
 # login
 auth = tweepy.OAuthHandler(consumer_key, consumer_secret)
 auth.set_access_token(access_token, access_token_secret)
+
 
 # set up tweepy
 #api = tweepy.API(auth, parser=JSONParser())
 api = tweepy.API(auth)
 
 # set up pushover
-init("aJcfJv8iqShDjjwXdg5A5eCRbwqvsH")
+init(pushover_api_key)
 
 # start up RDS instance
 #rdsClient = boto3.client('rds')
@@ -53,24 +63,24 @@ rdsClient = session.create_client('rds')
 
 try:
 	response = rdsClient.start_db_instance(
-		DBInstanceIdentifier='jtweets'
+		DBInstanceIdentifier = rdsInstance
 	)
 	time.sleep(600)
 	
 except Exception, e:
 	if str(e).find("is not stopped, cannot be started.") > 0 :
 		# its not already powered on
-		Client("gCcFJwgAw48scLCTiR9Q2om92jGqUP").send_message("RDS instance already started - check out - $$$?" + str(e), title="getjplays.py")
+		Client(pushover_app_id).send_message("RDS instance already started - check out - $$$?" + str(e), title="getjplays.py")
 	else:
 		# other exceptions
-		Client("gCcFJwgAw48scLCTiR9Q2om92jGqUP").send_message("RDS instance could not be started - quitting" + str(e), title="getjplays.py")
+		Client(pushover_app_id).send_message("RDS instance could not be started - quitting" + str(e), title="getjplays.py")
 		exit()
 
 # set up mysql
 try:
-	db = MySQLdb.connect("jtweets.ciizausrav91.us-west-2.rds.amazonaws.com", "jtweets", "jtweets1", "jtweets", connect_timeout=5)
+	db = MySQLdb.connect(rdsHost, rdsUsername, rdsPassword, rdsInstance, connect_timeout=5)
 except Exception, e:
-	Client("gCcFJwgAw48scLCTiR9Q2om92jGqUP").send_message("RDS is apparently up but couldn't connect to MySQL - quitting" + str(e), title="getjplays.py")
+	Client(pushover_app_id).send_message("RDS is apparently up but couldn't connect to MySQL - quitting" + str(e), title="getjplays.py")
 	exit()
 
 cursor = db.cursor()
@@ -173,17 +183,17 @@ for i in sys.argv:
 if nohup==False:
 	try:
 		response = rdsClient.stop_db_instance(
-			DBInstanceIdentifier='jtweets'
+			DBInstanceIdentifier = rdsInstance
 		)
-		Client("gCcFJwgAw48scLCTiR9Q2om92jGqUP").send_message("Successfully loaded jtweets and shut down RDS" + lastResults, title="getjplays.py")
+		Client(pushover_app_id).send_message("Successfully loaded jtweets and shut down RDS" + lastResults, title="getjplays.py")
 		
 	except Exception, e:
 		if str(e).find(" is not in available state.") > 0 :
 			# can't turn it off, already being turned off maybe?
-			Client("gCcFJwgAw48scLCTiR9Q2om92jGqUP").send_message("Couldn't stop RDS instance - says its not in running state.  Investigate - $$$?" + chr(10) + lastResults + chr(10) + str(e), title="getjplays.py")
+			Client(pushover_app_id).send_message("Couldn't stop RDS instance - says its not in running state.  Investigate - $$$?" + chr(10) + lastResults + chr(10) + str(e), title="getjplays.py")
 			
 		else:
 			# can't turn it off for some other reason
-			Client("gCcFJwgAw48scLCTiR9Q2om92jGqUP").send_message("Couldn't stop RDS instance, not sure why" + chr(10) + lastResults + chr(10) + str(e), title="getjplays.py")
+			Client(pushover_app_id).send_message("Couldn't stop RDS instance, not sure why" + chr(10) + lastResults + chr(10) + str(e), title="getjplays.py")
 else:
 	print "--nohup is True - not shutting down RDS.\n"
